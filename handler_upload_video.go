@@ -90,6 +90,11 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	newID := base64.RawURLEncoding.EncodeToString(key)
 	assetPath := getAssetPath(newID, mediaType)
 
+	assetPath, err = addVideoOrientationPrefix(assetPath, tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Adding orientation prefix failed", err)
+	}
+
 	input := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &assetPath,

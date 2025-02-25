@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -37,4 +41,55 @@ func mediaTypeToExt(mediaType string) string {
 		return ".bin"
 	}
 	return "." + parts[1]
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+	var buffer bytes.Buffer
+	cmd.Stdout = &buffer
+
+	err := cmd.Run()
+	if err != nil {
+		return "", err
+	}
+
+	jsonData := struct {
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}{}
+	if err := json.Unmarshal(buffer.Bytes(), &jsonData); err != nil {
+		return "", err
+	}
+	if len(jsonData.Streams) == 0 {
+		return "other", errors.New("no streams found in ffprobe output")
+	}
+
+	ratio := float64(jsonData.Streams[0].Width) / float64(jsonData.Streams[0].Height)
+
+	switch {
+	case ratio > 1.0:
+		return "16:9", nil
+	case ratio < 1.0:
+		return "9:16", nil
+	default:
+		return "other", nil
+	}
+}
+
+func addVideoOrientationPrefix(key, filePath string) (string, error) {
+	ratio, err := getVideoAspectRatio(filePath)
+	if err != nil {
+		return "", err
+	}
+
+	switch ratio {
+	case "16:9":
+		return fmt.Sprintf("landscape/%s", key), nil
+	case "9:16":
+		return fmt.Sprintf("portrait/%s", key), nil
+	default:
+		return fmt.Sprintf("other/%s", key), nil
+	}
 }
