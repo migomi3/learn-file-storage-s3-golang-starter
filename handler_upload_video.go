@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -101,6 +102,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	key, err = addVideoOrientationPrefix(key, processedPath)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Adding orientation prefix failed", err)
+		return
 	}
 
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
@@ -110,11 +112,19 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		ContentType: &mediaType,
 	})
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Unable to put the obeject into the s3 bucket", err)
+		respondWithError(w, http.StatusBadRequest, "Unable to put the object into the s3 bucket", err)
+		return
 	}
 
-	url := cfg.getS3AssetURL(key)
+	url := fmt.Sprintf("%s,%s", cfg.s3Bucket, key)
 	video.VideoURL = &url
+
+	video, err = cfg.dbVideoToSignedVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "failed to sign video", err)
+		return
+	}
+
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Could not update video", err)
