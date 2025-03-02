@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"io"
 	"mime"
 	"net/http"
@@ -70,43 +68,52 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	defer os.Remove(tempFile.Name())
 	defer tempFile.Close()
 
-	_, err = io.Copy(tempFile, file)
-	if err != nil {
+	if _, err = io.Copy(tempFile, file); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to copy files", err)
 		return
 	}
 
-	_, err = tempFile.Seek(0, io.SeekStart)
-	if err != nil {
+	if _, err = tempFile.Seek(0, io.SeekStart); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "failed to reset tempFile's file pointer", err)
 		return
 	}
 
-	key := make([]byte, 32)
-	_, err = rand.Read(key)
+	key, err := getAssetPath(mediaType)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "rand.Read failed", err)
+		respondWithError(w, http.StatusInternalServerError, "Random bytes generation failed", err)
+		return
 	}
-	newID := base64.RawURLEncoding.EncodeToString(key)
-	assetPath := getAssetPath(newID, mediaType)
 
-	assetPath, err = addVideoOrientationPrefix(assetPath, tempFile.Name())
+	processedPath, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Fast Start processing failed", err)
+	}
+	defer os.Remove(processedPath) // Clean up the processed file too
+
+	// Open the processed file for uploading
+	processedFile, err := os.Open(processedPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to open processed file", err)
+		return
+	}
+	defer processedFile.Close()
+
+	key, err = addVideoOrientationPrefix(key, processedPath)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Adding orientation prefix failed", err)
 	}
 
-	input := s3.PutObjectInput{
+	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
-		Key:         &assetPath,
-		Body:        tempFile,
+		Key:         &key,
+		Body:        processedFile,
 		ContentType: &mediaType,
-	}
-	_, err = cfg.s3Client.PutObject(r.Context(), &input)
+	})
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to put the obeject into the s3 bucket", err)
 	}
 
-	url := cfg.getS3AssetURL(assetPath)
+	url := cfg.getS3AssetURL(key)
 	video.VideoURL = &url
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {

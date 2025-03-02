@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,9 +20,16 @@ func (cfg apiConfig) ensureAssetsDir() error {
 	return nil
 }
 
-func getAssetPath(videoID string, mediaType string) string {
+func getAssetPath(mediaType string) (string, error) {
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	if err != nil {
+		return "", err
+	}
+	id := base64.RawURLEncoding.EncodeToString(key)
+
 	ext := mediaTypeToExt(mediaType)
-	return fmt.Sprintf("%s%s", videoID, ext)
+	return fmt.Sprintf("%s%s", id, ext), nil
 }
 
 func (cfg apiConfig) getAssetDiskPath(assetPath string) string {
@@ -66,16 +75,15 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		return "other", errors.New("no streams found in ffprobe output")
 	}
 
-	ratio := float64(jsonData.Streams[0].Width) / float64(jsonData.Streams[0].Height)
+	width := jsonData.Streams[0].Width
+	height := jsonData.Streams[0].Height
 
-	switch {
-	case ratio > 1.0:
+	if width == 16*height/9 {
 		return "16:9", nil
-	case ratio < 1.0:
+	} else if height == 16*width/9 {
 		return "9:16", nil
-	default:
-		return "other", nil
 	}
+	return "other", nil
 }
 
 func addVideoOrientationPrefix(key, filePath string) (string, error) {
@@ -92,4 +100,43 @@ func addVideoOrientationPrefix(key, filePath string) (string, error) {
 	default:
 		return fmt.Sprintf("other/%s", key), nil
 	}
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	if _, err := os.Stat(filePath); err != nil {
+		return "", err
+	}
+
+	processedFilePath := fmt.Sprintf("%s.processing", filePath)
+
+	cmd := exec.Command(
+		"ffmpeg", "-y",
+		"-i", filePath,
+		"-c", "copy",
+		"-movflags", "faststart",
+		"-f", "mp4", processedFilePath,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ffmpeg error: %v, stderr: %s", err, stderr.String())
+	}
+
+	processedFile, err := os.Open(processedFilePath)
+	if err != nil {
+		return "", err
+	}
+	defer processedFile.Close()
+
+	// Read first 100 bytes
+	buf := make([]byte, 100)
+	_, err = processedFile.Read(buf)
+	if err != nil {
+		return "", err
+	}
+	fmt.Printf("First 100 bytes: %v\n", buf)
+
+	return processedFilePath, nil
 }

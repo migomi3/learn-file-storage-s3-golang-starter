@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -50,13 +48,11 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	key := make([]byte, 32)
-	_, err = rand.Read(key)
+	assetPath, err := getAssetPath(mediaType)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "rand.Read failed", err)
+		respondWithError(w, http.StatusInternalServerError, "Random bytes generation failed", err)
+		return
 	}
-	newID := base64.RawURLEncoding.EncodeToString(key)
-	assetPath := getAssetPath(newID, mediaType)
 	assetDiskPath := cfg.getAssetDiskPath(assetPath)
 
 	dst, err := os.Create(assetDiskPath)
