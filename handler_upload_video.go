@@ -1,8 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"os"
@@ -116,14 +116,10 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	url := fmt.Sprintf("%s,%s", cfg.s3Bucket, key)
+	url := cfg.getS3AssetURL(key)
 	video.VideoURL = &url
 
-	video, err = cfg.dbVideoToSignedVideo(video)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "failed to sign video", err)
-		return
-	}
+	log.Printf("URL: %s", url)
 
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
